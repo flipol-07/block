@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_description">Block muestra una pantalla de bloqueo encima de cualquier app mientras tienes una sesión de estudio activa. Solo mira qué app está abierta; no lee ni guarda lo que escribes.</string>
+</resources>

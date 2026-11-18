@@ -1,0 +1,5 @@
+# Secretos locales
+app/config.json
+supabase/.env.local
+supabase/.temp/
+supabase/.branches/
