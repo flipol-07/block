@@ -1,56 +1,127 @@
-# Block
+<p align="center">
+  <img src="docs/screenshots/icon.png" width="112" alt="Block icon">
+</p>
 
-Bloqueo de concentración para **Windows + Android** conectados. Empiezas una sesión en el PC y el móvil entero queda bloqueado hasta que acabe. En el PC se cierran las apps de tu lista, las webs bloqueadas redirigen a Block y, si quieres, todo queda tapado menos una ventana.
+<h1 align="center">Block</h1>
 
-Contexto de negocio e investigación de mercado: [BUSINESS_LOGIC.md](BUSINESS_LOGIC.md).
+<p align="center">
+  <b>Start studying on your laptop. Your phone locks itself until you're done.</b><br>
+  A cross-device focus blocker for Windows + Android.
+</p>
 
-## Cómo funciona
+<p align="center">
+  <img src="docs/screenshots/windows.png" height="420" alt="Block on Windows">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/android.png" height="420" alt="Block on Android">
+</p>
 
-| Pieza | Dónde | Qué hace |
+---
+
+## Why
+
+Most focus apps block one device at a time. You lock your phone, then you open
+WhatsApp on the laptop. You block websites on the laptop, then you pick up the
+phone.
+
+Block treats your devices as one. When you start a session on the PC:
+
+- **The phone locks completely.** It shows only a countdown, an emergency-call
+  button and an emergency exit. This isn't app-by-app blocking.
+- **The PC closes distracting apps** (WhatsApp, Discord, Telegram, Spotify,
+  Steam…) and **redirects distracting websites**.
+- **Optional single-window mode:** click the window you're studying in (your PDF,
+  your IDE) and everything else is covered until the session ends.
+- **The session ends by itself** at the time set by the server. It works even
+  offline, and changing the phone's clock doesn't end it early.
+
+## Built from what people actually complain about
+
+Before writing code I reviewed the existing focus blockers (Freedom, Cold Turkey,
+Opal, Forest, AppBlock, Focus Bear…) and what users complain about in their
+negative reviews:
+
+| Common complaint | What Block does |
+|---|---|
+| "Too easy to bypass" (disable accessibility, uninstall, change the clock) | Settings is covered during a session, uninstall is blocked via Device Admin, and the session end time is anchored to a monotonic clock |
+| "It worked for a week, then the phone killed it" | Asks for a battery-optimization exemption and shows step-by-step guidance for aggressive OEMs. The lock survives a reboot |
+| "I just switch to the other device" | One account links all your devices, so a session started on any of them locks all of them |
+| "Too strict, I had a real emergency" / "too easy to quit" | Emergency exit with friction: 60 s of breathing, then type a sentence and pick a reason. It's logged in your history |
+| Guilt mechanics (dead trees, lost streaks) | History shows the minutes you studied and nothing else |
+
+The friction-based exit follows research showing that friction *with an option to
+quit* reduces impulsive app opens far more than hard blocks or reflective
+prompts alone (one sec study, PNAS 2023).
+
+## How it works
+
+```
+┌──────────────┐   start_focus_session()   ┌──────────────────┐
+│  Windows app │ ────────────────────────▶ │ Supabase         │
+│  (Flutter +  │ ◀──── Realtime ────────── │ Postgres + RLS   │
+│   Win32 C++) │                           │ sessions via RPC │
+└──────┬───────┘                           └────────▲─────────┘
+       │ 127.0.0.1                                  │ device_session_state()
+┌──────▼───────┐                           ┌────────┴─────────┐
+│ Browser ext. │                           │ Android          │
+│ (MV3)        │                           │ Accessibility-   │
+└──────────────┘                           │ Service (Kotlin) │
+                                           └──────────────────┘
+```
+
+| Part | Tech | What it does |
 |---|---|---|
-| App Flutter | `app/lib` | UI, sesiones, login, listas, historial (Android y Windows) |
-| Bloqueo Android | `app/android/.../blocker` | AccessibilityService + pantalla `TYPE_ACCESSIBILITY_OVERLAY`, consulta la sesión al encender la pantalla y cada 2 s con pantalla encendida |
-| Bloqueo Windows | `app/windows/runner/blocker` | Cierra procesos de la lista, modo una sola ventana (capa con agujero + foco + hook de teclado), arranque con Windows |
-| Extensión | `extension/` | Redirige webs bloqueadas; lee `http://127.0.0.1:47613/state` de la app de Windows |
-| Backend | `supabase/migrations` | Proyecto `block` (París). Sesiones con hora de fin fijada por el servidor, solo por RPC |
+| App (`app/lib`) | Flutter, Riverpod | UI, sessions, login, block lists, history. One codebase for Android and Windows |
+| Android blocker (`app/android/.../blocker`) | Kotlin | `AccessibilityService` + full-screen `TYPE_ACCESSIBILITY_OVERLAY` that sits above everything, Settings included. It checks the session state when the screen turns on and every 2 s while it stays on, so it works even when Flutter isn't running |
+| Windows blocker (`app/windows/runner/blocker`) | C++ / Win32 | Process guard, single-window overlay (layered window with a hole, foreground enforcement, low-level keyboard hook for Win/Alt+Tab), tray app, autostart |
+| Website blocking (`extension/`) | Chrome/Edge MV3 | `declarativeNetRequest` redirects, driven by a local endpoint exposed by the Windows app |
+| Backend (`supabase/migrations`) | Supabase | Sessions can only be created or ended through RPCs, so **the server sets the times**. Each device authenticates with its own secret, so the native Android service never shares the user's refresh token |
 
-**El fin de sesión no depende de la red**: cada dispositivo guarda la hora de fin del servidor, anclada a un reloj monótono, y se desbloquea solo. Cambiar la hora del móvil no sirve para saltárselo.
+### Design decisions worth stealing
 
-**El móvil no usa el token del usuario**: el servicio nativo consulta con un secreto propio del dispositivo (`device_session_state`), así que funciona aunque Flutter esté cerrado.
+- **Lock when you look, not when the server says so.** The phone only needs to
+  *look* locked when you pick it up. So instead of push notifications it checks
+  on `SCREEN_ON` and polls while the screen is on. No Firebase, and it still
+  locks within seconds.
+- **Unlocking never needs the network.** Every device stores the server's end
+  time anchored to `elapsedRealtime()` / a monotonic stopwatch. It unlocks on
+  time even in airplane mode.
+- **A Flutter restart can't unlock the phone.** The native side only clears a
+  cloud session after the server confirms it ended.
 
-## Compilar
+## Running it yourself
 
-Configuración de la nube en `app/config.json` (fuera de git):
+1. Create a Supabase project and apply `supabase/migrations`.
+2. Create `app/config.json` (it's git-ignored):
+   ```json
+   { "SUPABASE_URL": "https://<ref>.supabase.co", "SUPABASE_KEY": "<publishable or anon key>" }
+   ```
+   Without it, Block runs in local-only mode (each device on its own).
+3. Build:
+   ```bash
+   cd app
+   flutter build apk --release --dart-define-from-file=config.json      # Android
+   flutter build windows --release --dart-define-from-file=config.json  # Windows (needs VS C++ tools)
+   ```
+4. On Android, grant the three permissions from the in-app setup screen. On
+   Android 13+ sideloaded apps first need *"Allow restricted settings"* in App
+   info.
+5. Load `extension/` as an unpacked extension in Chrome or Edge.
 
-```json
-{ "SUPABASE_URL": "https://<ref>.supabase.co", "SUPABASE_KEY": "<publishable/anon key>" }
-```
+Tests: `flutter analyze && flutter test`.
 
-**Android** (desde WSL):
+The UI is in Spanish for now.
 
-```bash
-cd app && ~/flutter/bin/flutter build apk --release --dart-define-from-file=config.json
-```
+## Honest limitations
 
-**Windows**: MSBuild no compila desde rutas `\\wsl.localhost`, así que se copia a `C:\src\block-build` y se compila con el Flutter de Windows:
+Block adds **a lot of friction, not absolute security**, the same as every app
+in this category:
 
-```powershell
-robocopy \\wsl.localhost\ubuntu\home\plore\proyectos\mio\Block\app C:\src\block-build /MIR /XD build .dart_tool android .idea ephemeral /R:0 /W:0
-cd C:\src\block-build; C:\src\flutter\bin\flutter.bat build windows --release --dart-define-from-file=config.json
-```
+- **Android:** safe mode disables third-party apps, and Android 17's Advanced
+  Protection revokes accessibility access from non-accessibility apps. Google
+  Play also restricts accessibility-based blockers, so for now Block is sideloaded.
+- **Windows:** Ctrl+Alt+Del / Task Manager can't be intercepted by a user-mode app.
 
-Hay que excluir `ephemeral`: dentro hay enlaces simbólicos de Linux que bloquean robocopy.
+## Status
 
-Instalación en este PC: `%LOCALAPPDATA%\Programs\Block\block.exe`. Arranca con Windows, oculto en la bandeja.
-
-## Tests
-
-```bash
-cd app && ~/flutter/bin/flutter analyze && ~/flutter/bin/flutter test
-```
-
-## Límites conocidos
-
-- **Android**: arrancar en modo seguro desactiva Block, y eso no se puede evitar. Android 17 con Protección Avanzada retira el permiso de accesibilidad.
-- **Windows**: Ctrl+Alt+Supr y el Administrador de tareas siguen funcionando.
-- Block pone **fricción, no seguridad absoluta**, igual que toda la competencia.
+Personal project, working end-to-end on Windows 11 and a Galaxy A55 (Android 16).
+Ideas, issues and PRs are welcome.

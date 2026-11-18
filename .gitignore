@@ -3,3 +3,6 @@ app/config.json
 supabase/.env.local
 supabase/.temp/
 supabase/.branches/
+
+# Estado local de Claude Code
+.claude/scheduled_tasks.lock
